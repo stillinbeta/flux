@@ -101,8 +101,9 @@ func main() {
 		gitTimeout      = fs.Duration("git-timeout", 20*time.Second, "duration after which git operations time out")
 
 		// GPG commit signing
-		gitImportGPG  = fs.String("git-gpg-key-import", "", "keys at the path given (either a file or a directory) will be imported for use in signing commits")
-		gitSigningKey = fs.String("git-signing-key", "", "if set, commits will be signed with this GPG key")
+		gitImportGPG        = fs.String("git-gpg-key-import", "", "keys at the path given (either a file or a directory) will be imported for use in signing commits")
+		gitSigningKey       = fs.String("git-signing-key", "", "if set, commits will be signed with this GPG key")
+		gitVerifySignatures = fs.Bool("git-verify-signatures", false, "if set, commits will be verified before Flux applies them")
 
 		// syncing
 		syncInterval = fs.Duration("sync-interval", 5*time.Minute, "apply config in git to cluster at least this often, even if there are no new commits")
@@ -439,15 +440,17 @@ func main() {
 
 	gitRemote := git.Remote{URL: *gitURL}
 	gitConfig := git.Config{
-		Paths:       *gitPath,
-		Branch:      *gitBranch,
-		SyncTag:     *gitSyncTag,
-		NotesRef:    *gitNotesRef,
-		UserName:    *gitUser,
-		UserEmail:   *gitEmail,
-		SigningKey:  *gitSigningKey,
-		SetAuthor:   *gitSetAuthor,
-		SkipMessage: *gitSkipMessage,
+		Paths:            *gitPath,
+		Branch:           *gitBranch,
+		SyncTag:          *gitSyncTag,
+		NotesRef:         *gitNotesRef,
+		UserName:         *gitUser,
+		UserEmail:        *gitEmail,
+		SigningKey:       *gitSigningKey,
+		VerifySignatures: *gitVerifySignatures,
+		SetAuthor:        *gitSetAuthor,
+		SkipMessage:      *gitSkipMessage,
+		Timeout:          *gitTimeout,
 	}
 
 	repo := git.NewRepo(gitRemote, git.PollInterval(*gitPollInterval), git.Timeout(*gitTimeout))
@@ -466,6 +469,7 @@ func main() {
 		"user", *gitUser,
 		"email", *gitEmail,
 		"signing-key", *gitSigningKey,
+		"verify-signatures", *gitVerifySignatures,
 		"sync-tag", *gitSyncTag,
 		"notes-ref", *gitNotesRef,
 		"set-author", *gitSetAuthor,
@@ -490,7 +494,6 @@ func main() {
 		LoopVars: &daemon.LoopVars{
 			SyncInterval:         *syncInterval,
 			RegistryPollInterval: *registryPollInterval,
-			GitOpTimeout:         *gitTimeout,
 		},
 	}
 
