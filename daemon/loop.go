@@ -90,11 +90,14 @@ func (d *Daemon) Loop(stop chan struct{}, wg *sync.WaitGroup, logger log.Logger)
 			d.AskForSync()
 		case <-d.Repo.C:
 			ctx, cancel := context.WithTimeout(context.Background(), d.GitConfig.Timeout)
-			newSyncHead, err := d.LatestValidRevision(ctx, syncHead)
+			newSyncHead, invalidCommit, err := latestValidRevision(ctx, d.Repo, d.GitConfig, syncHead)
 			cancel()
 			if err != nil {
 				logger.Log("url", d.Repo.Origin().URL, "err", err)
 				continue
+			}
+			if invalidCommit.Revision != "" {
+				logger.Log("err", "found invalid GPG signature for commit", "revision", invalidCommit.Revision, "key", invalidCommit.Signature.Key)
 			}
 			logger.Log("event", "refreshed", "url", d.Repo.Origin().URL, "branch", d.GitConfig.Branch, "HEAD", newSyncHead)
 			if newSyncHead != syncHead {

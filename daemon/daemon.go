@@ -357,10 +357,10 @@ func (d *Daemon) sync() jobFunc {
 		if err != nil {
 			return result, err
 		}
-		if latestVerifiedRev, err := d.LatestValidRevision(ctx, head); err != nil {
+		if latestVerifiedRev, _, err := latestValidRevision(ctx, d.Repo, d.GitConfig, head); err != nil {
 			return result, err
 		} else if head != latestVerifiedRev {
-			return result, fmt.Errorf("unable to sync to invalid HEAD revision (%s) latest verified revision is: %s", head, latestVerifiedRev)
+			return result, fmt.Errorf("unable to sync to invalid HEAD revision (%s) latest valid revision is: %s", head, latestVerifiedRev)
 		}
 		result.Revision = head
 		return result, nil
@@ -423,12 +423,8 @@ func (d *Daemon) updatePolicy(spec update.Spec, updates policy.Updates) updateFu
 			return result, nil
 		}
 
-		if headRev, err := working.HeadRevision(ctx); err != nil {
+		if err := verifyWorkingRepo(ctx, d.Repo, working, d.GitConfig); err != nil {
 			return result, err
-		} else if latestVerifiedRev, err := d.LatestValidRevision(ctx, headRev); err != nil {
-			return result, err
-		} else if headRev != latestVerifiedRev {
-			return result, fmt.Errorf("HEAD (%s) is not a verified revision; can not update on top of unverified HEAD", headRev)
 		}
 
 		commitAuthor := ""
@@ -472,12 +468,8 @@ func (d *Daemon) release(spec update.Spec, c release.Changes) updateFunc {
 		var revision string
 
 		if c.ReleaseKind() == update.ReleaseKindExecute {
-			if headRev, err := working.HeadRevision(ctx); err != nil {
+			if err := verifyWorkingRepo(ctx, d.Repo, working, d.GitConfig); err != nil {
 				return zero, err
-			} else if latestVerifiedRev, err := d.LatestValidRevision(ctx, headRev); err != nil {
-				return zero, err
-			} else if headRev != latestVerifiedRev {
-				return zero, fmt.Errorf("HEAD (%s) is not a verified revision; can not update on top of unverified HEAD", headRev)
 			}
 
 			commitMsg := spec.Cause.Message
@@ -635,53 +627,6 @@ func (d *Daemon) WithClone(ctx context.Context, fn func(*git.Checkout) error) er
 	return fn(co)
 }
 
-// LatestValidRevision returns the latest valid revision for the
-// configured branch when the verification of GPG signatures for Git
-// is enabled _or_ the HEAD revision of the configured branch when it
-// is not. In case verification is enabled and a current revision is
-// given it will also validate the tag signature -- as the state of
-// the branch can not be trusted when the tag originates from an
-// unknown source.
-func (d *Daemon) LatestValidRevision(ctx context.Context, currentRevision string) (string, error) {
-	newRevision, err := d.Repo.Revision(ctx, d.GitConfig.Branch)
-	if err != nil {
-		return currentRevision, err
-	}
-	if !d.GitConfig.VerifySignatures {
-		return newRevision, err
-	}
-
-	if currentRevision != "" {
-		err = d.Repo.VerifyTag(ctx, d.GitConfig.SyncTag)
-		if err != nil {
-			return currentRevision, errors.Wrap(err, "failed to verify signature of sync tag")
-		}
-	}
-
-	var commits []git.Commit
-	if currentRevision == "" {
-		commits, err = d.Repo.CommitsBefore(ctx, newRevision)
-	} else {
-		commits, err = d.Repo.CommitsBetween(ctx, currentRevision, newRevision)
-	}
-
-	if err != nil {
-		return currentRevision, err
-	}
-
-	for i := len(commits) - 1; i >= 0; i-- {
-		if !commits[i].Signature.Valid() {
-			d.Logger.Log("err", "invalid GPG signature for commit", "revision", commits[i].Revision, "key", commits[i].Signature.Key)
-			if i+1 < len(commits) {
-				return commits[i+1].Revision, nil
-			}
-			return currentRevision, nil
-		}
-	}
-
-	return newRevision, nil
-}
-
 func (d *Daemon) LogEvent(ev event.Event) error {
 	if d.EventWriter == nil {
 		d.Logger.Log("event", ev, "logupstream", "false")
@@ -802,4 +747,67 @@ func policyEventTypes(u policy.Update) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+// latestValidRevision returns the latest valid revision for the
+// configured branch when the verification of GPG signatures for Git
+// is enabled _or_ the HEAD revision of the configured branch when it
+// is not. In case verification is enabled and a current revision is
+// given it will also validate the tag signature -- as the state of
+// the branch can not be trusted when the tag originates from an
+// unknown source.
+func latestValidRevision(ctx context.Context, repo *git.Repo, gitConfig git.Config, currentRevision string) (string, git.Commit, error) {
+	var invalidCommit = git.Commit{}
+	newRevision, err := repo.Revision(ctx, gitConfig.Branch)
+	if err != nil {
+		return currentRevision, invalidCommit, err
+	}
+	if !gitConfig.VerifySignatures {
+		return newRevision, invalidCommit, err
+	}
+
+	if currentRevision != "" {
+		err = repo.VerifyTag(ctx, gitConfig.SyncTag)
+		if err != nil {
+			return currentRevision, invalidCommit, errors.Wrap(err, "failed to verify signature of sync tag")
+		}
+	}
+
+	var commits []git.Commit
+	if currentRevision == "" {
+		commits, err = repo.CommitsBefore(ctx, newRevision)
+	} else {
+		commits, err = repo.CommitsBetween(ctx, currentRevision, newRevision)
+	}
+
+	if err != nil {
+		return currentRevision, invalidCommit, err
+	}
+
+	for i := len(commits) - 1; i >= 0; i-- {
+		if !commits[i].Signature.Valid() {
+			if i+1 < len(commits) {
+				return commits[i+1].Revision, commits[i], nil
+			}
+			return currentRevision, commits[i], nil
+		}
+	}
+
+	return newRevision, invalidCommit, nil
+}
+
+func verifyWorkingRepo(ctx context.Context, repo *git.Repo, working *git.Checkout, gitConfig git.Config) error {
+	if syncRevision, err := working.SyncRevision(ctx); err != nil {
+		return err
+	} else if latestVerifiedRev, _, err := latestValidRevision(ctx, repo, gitConfig, syncRevision); err != nil {
+		return err
+	} else if headRev, err := working.HeadRevision(ctx); err != nil {
+		return err
+	} else if headRev != latestVerifiedRev {
+		return fmt.Errorf(`HEAD is not a verified commit.
+
+The branch HEAD in the git repo is not verified, and fluxd is unable to make a change on top of it.
+The last verified commit was %.8s. HEAD is %.8s.`, latestVerifiedRev, headRev)
+	}
+	return nil
 }
