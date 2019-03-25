@@ -354,7 +354,7 @@ func (d *Daemon) sync() jobFunc {
 			return result, err
 		}
 		syncHead, err := d.Repo.Revision(ctx, d.GitConfig.SyncTag)
-		if err != nil {
+		if err != nil && !isUnknownRevision(err) {
 			return result, err
 		}
 		var latestVerifiedRev string
@@ -805,7 +805,7 @@ func latestValidRevision(ctx context.Context, repo *git.Repo, gitConfig git.Conf
 }
 
 func verifyWorkingRepo(ctx context.Context, repo *git.Repo, working *git.Checkout, gitConfig git.Config) error {
-	if syncRevision, err := working.SyncRevision(ctx); err != nil {
+	if syncRevision, err := working.SyncRevision(ctx); err != nil && !isUnknownRevision(err) {
 		return err
 	} else if latestVerifiedRev, _, err := latestValidRevision(ctx, repo, gitConfig, syncRevision); err != nil {
 		return err
@@ -818,4 +818,10 @@ The branch HEAD in the git repo is not verified, and fluxd is unable to make a c
 The last verified commit was %.8s. HEAD is %.8s.`, latestVerifiedRev, headRev)
 	}
 	return nil
+}
+
+func isUnknownRevision(err error) bool {
+	return err != nil &&
+		(strings.Contains(err.Error(), "unknown revision or path not in the working tree.") ||
+			strings.Contains(err.Error(), "bad revision"))
 }

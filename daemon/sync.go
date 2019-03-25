@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"github.com/go-kit/kit/log"
 	"github.com/pkg/errors"
-	"strings"
 	"time"
 
 	"github.com/weaveworks/flux"
@@ -386,12 +385,6 @@ func refresh(ctx context.Context, s *Sync) error {
 	err := s.repo.Refresh(ctx)
 	cancel()
 	return err
-}
-
-func isUnknownRevision(err error) bool {
-	return err != nil &&
-		(strings.Contains(err.Error(), "unknown revision or path not in the working tree.") ||
-			strings.Contains(err.Error(), "bad revision"))
 }
 
 func makeGitConfigHash(remote git.Remote, conf git.Config) string {
