@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -60,12 +61,17 @@ func (opts *syncOpts) RunE(cmd *cobra.Command, args []string) error {
 	}
 	result, err := awaitJob(ctx, opts.API, jobID)
 	if err != nil {
-		fmt.Fprintf(cmd.OutOrStderr(), "Failed to complete sync job (ID %q)\n", jobID)
-		return err
+		switch isUnverifiedHead(err) {
+		case true:
+			fmt.Fprintf(cmd.OutOrStderr(), "Warning: %s\n", err)
+		default:
+			fmt.Fprintf(cmd.OutOrStderr(), "Failed to complete sync job (ID %q)\n", jobID)
+			return err
+		}
 	}
 
 	rev := result.Revision[:7]
-	fmt.Fprintf(cmd.OutOrStderr(), "HEAD of %s is %s\n", gitConfig.Remote.Branch, rev)
+	fmt.Fprintf(cmd.OutOrStderr(), "Revision of %s to apply is %s\n", gitConfig.Remote.Branch, rev)
 	fmt.Fprintf(cmd.OutOrStderr(), "Waiting for %s to be applied ...\n", rev)
 	err = awaitSync(ctx, opts.API, rev)
 	if err != nil {
@@ -73,4 +79,10 @@ func (opts *syncOpts) RunE(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintln(cmd.OutOrStderr(), "Done.")
 	return nil
+}
+
+func isUnverifiedHead(err error) bool {
+	return err != nil &&
+		(strings.Contains(err.Error(), "branch HEAD in the git repo is not verified") &&
+			strings.Contains(err.Error(), "last verified commit was"))
 }

@@ -257,7 +257,7 @@ func (d *Daemon) executeJob(id job.ID, do jobFunc, logger log.Logger) (job.Resul
 	d.JobStatusCache.SetStatus(id, job.Status{StatusString: job.StatusRunning})
 	result, err := do(ctx, id, logger)
 	if err != nil {
-		d.JobStatusCache.SetStatus(id, job.Status{StatusString: job.StatusFailed, Err: err.Error()})
+		d.JobStatusCache.SetStatus(id, job.Status{StatusString: job.StatusFailed, Err: err.Error(), Result: result})
 		return result, err
 	}
 	d.JobStatusCache.SetStatus(id, job.Status{StatusString: job.StatusSucceeded, Result: result})
@@ -353,17 +353,25 @@ func (d *Daemon) sync() jobFunc {
 		if err != nil {
 			return result, err
 		}
-		head, err := d.Repo.Revision(ctx, d.GitConfig.Branch)
+		syncHead, err := d.Repo.Revision(ctx, d.GitConfig.SyncTag)
 		if err != nil {
 			return result, err
 		}
-		if latestVerifiedRev, _, err := latestValidRevision(ctx, d.Repo, d.GitConfig, head); err != nil {
+		var latestVerifiedRev string
+		if latestVerifiedRev, _, err = latestValidRevision(ctx, d.Repo, d.GitConfig, syncHead); err != nil {
+			return result, err
+		} else if head, err := d.Repo.Revision(ctx, d.GitConfig.Branch); err != nil {
 			return result, err
 		} else if head != latestVerifiedRev {
-			return result, fmt.Errorf("unable to sync to invalid HEAD revision (%s) latest valid revision is: %s", head, latestVerifiedRev)
+			result.Revision = latestVerifiedRev
+			return result, fmt.Errorf(
+				"The branch HEAD in the git repo is not verified, and fluxd is unable to sync to it. The last verified commit was %.8s. HEAD is %.8s.",
+				latestVerifiedRev,
+				head,
+			)
 		}
-		result.Revision = head
-		return result, nil
+		result.Revision = latestVerifiedRev
+		return result, err
 	}
 }
 
