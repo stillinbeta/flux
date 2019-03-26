@@ -149,6 +149,7 @@ registry:
     region:
     includeId:
     excludeId:
+    mandatory: false
   # Azure ACR settings
   acr:
     enabled: false
