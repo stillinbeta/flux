@@ -190,9 +190,11 @@ func (chs *ChartChangeSync) Run(stopCh <-chan struct{}, errc chan error, wg *syn
 						continue
 					}
 
-					ref := fhr.Spec.ChartSource.GitChartSource.RefOrDefault()
-					path := fhr.Spec.ChartSource.GitChartSource.Path
+					chartSource := fhr.Spec.ChartSource.GitChartSource
+					ref := chartSource.RefOrDefault()
+					path := chartSource.Path
 					releaseName := release.GetReleaseName(fhr)
+					cloneName := cloneName(releaseName, chartSource)
 
 					ctx, cancel := context.WithTimeout(context.Background(), helmop.GitOperationTimeout)
 					refHead, err := repo.Revision(ctx, ref)
@@ -206,7 +208,7 @@ func (chs *ChartChangeSync) Run(stopCh <-chan struct{}, errc chan error, wg *syn
 					// This FHR is using a git repo; and, it appears to have had commits since we last saw it.
 					// Check explicitly whether we should update its clone.
 					chs.clonesMu.Lock()
-					cloneForChart, ok := chs.clones[releaseName]
+					cloneForChart, ok := chs.clones[cloneName]
 					chs.clonesMu.Unlock()
 
 					if ok { // found clone
@@ -232,7 +234,7 @@ func (chs *ChartChangeSync) Run(stopCh <-chan struct{}, errc chan error, wg *syn
 						}
 						newCloneForChart := clone{head: refHead, export: newClone}
 						chs.clonesMu.Lock()
-						chs.clones[releaseName] = newCloneForChart
+						chs.clones[cloneName] = newCloneForChart
 						chs.clonesMu.Unlock()
 						if cloneForChart.export != nil {
 							cloneForChart.export.Clean()
@@ -261,6 +263,10 @@ func (chs *ChartChangeSync) Run(stopCh <-chan struct{}, errc chan error, wg *syn
 
 func mirrorName(chartSource *fluxv1beta1.GitChartSource) string {
 	return chartSource.GitURL // TODO(michael) this will not always be the case; e.g., per namespace, per auth
+}
+
+func cloneName(releaseName string, chartSource *fluxv1beta1.GitChartSource) string {
+	return mirrorName(chartSource) + releaseName
 }
 
 // maybeMirror starts mirroring the repo needed by a HelmRelease,
@@ -299,12 +305,13 @@ func (chs *ChartChangeSync) reconcileReleaseDef(fhr fluxv1beta1.HelmRelease) {
 	chartRevision := ""
 	if fhr.Spec.ChartSource.GitChartSource != nil {
 		chartSource := fhr.Spec.ChartSource.GitChartSource
+		cloneName := cloneName(releaseName, chartSource)
 		// We need to hold the lock until after we're done releasing
 		// the chart, so that the clone doesn't get swapped out from
 		// under us. TODO(michael) consider having a lock per clone.
 		chs.clonesMu.Lock()
 		defer chs.clonesMu.Unlock()
-		chartClone, ok := chs.clones[releaseName]
+		chartClone, ok := chs.clones[cloneName]
 		// FIXME(michael): if it's not cloned, and it's not going to
 		// be, we might not want to wait around until the next tick
 		// before reporting what's wrong with it. But if we just use
