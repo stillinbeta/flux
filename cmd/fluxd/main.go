@@ -124,6 +124,7 @@ func main() {
 		registryAWSRegions         = fs.StringSlice("registry-ecr-region", nil, "restrict ECR scanning to these AWS regions; if empty, only the cluster's region will be scanned")
 		registryAWSAccountIDs      = fs.StringSlice("registry-ecr-include-id", nil, "restrict ECR scanning to these AWS account IDs; if empty, all account IDs that aren't excluded may be scanned")
 		registryAWSBlockAccountIDs = fs.StringSlice("registry-ecr-exclude-id", []string{registry.EKS_SYSTEM_ACCOUNT}, "do not scan ECR for images in these AWS account IDs; the default is to exclude the EKS system account")
+		registryAWSMandatory       = fs.Bool("registry-ecr-mandatory", false, "exit with an error if the AWS API is not available")
 
 		// k8s-secret backed ssh keyring configuration
 		k8sSecretName            = fs.String("k8s-secret-name", "flux-git-deploy", "name of the k8s secret used to store the private SSH key")
@@ -356,10 +357,15 @@ func main() {
 		}
 		credsWithAWSAuth, err := registry.ImageCredsWithAWSAuth(imageCreds, log.With(logger, "component", "aws"), awsConf)
 		if err != nil {
+			if *registryAWSMandatory {
+				logger.Log("error", "AWS required (due to --registry-ecr-mandatory), but not available", "err", err)
+				os.Exit(1)
+			}
 			logger.Log("warning", "AWS authorization not used; pre-flight check failed")
 		} else {
 			imageCreds = credsWithAWSAuth
 		}
+
 		if *dockerConfig != "" {
 			credsWithDefaults, err := registry.ImageCredsWithDefaults(imageCreds, *dockerConfig)
 			if err != nil {
