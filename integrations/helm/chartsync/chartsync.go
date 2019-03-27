@@ -41,6 +41,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -266,7 +267,11 @@ func mirrorName(chartSource *fluxv1beta1.GitChartSource) string {
 }
 
 func cloneName(releaseName string, chartSource *fluxv1beta1.GitChartSource) string {
-	return mirrorName(chartSource) + releaseName
+	return mirrorName(chartSource) + "|" + releaseName
+}
+
+func cloneBelongsToRelease(cloneName, releaseName string) bool {
+	return strings.HasSuffix(cloneName, "|"+releaseName)
 }
 
 // maybeMirror starts mirroring the repo needed by a HelmRelease,
@@ -278,6 +283,25 @@ func (chs *ChartChangeSync) maybeMirror(fhr fluxv1beta1.HelmRelease) {
 			chs.logger.Log("info", "started mirroring repo", "repo", chartSource.GitURL)
 		}
 	}
+}
+
+// cleanUpStaleClones removes all chart source git clones for a
+// HelmRelease except the one that is currently in use.
+func (chs *ChartChangeSync) cleanUpStaleClones(fhr fluxv1beta1.HelmRelease) {
+	releaseName := release.GetReleaseName(fhr)
+	chartSource := fhr.Spec.ChartSource.GitChartSource
+	chs.clonesMu.Lock()
+	for k, c := range chs.clones {
+		if !cloneBelongsToRelease(k, releaseName) ||
+			k == cloneName(releaseName, chartSource) {
+			continue
+		}
+		if c.export != nil {
+			c.export.Clean()
+		}
+		delete(chs.clones, k)
+	}
+	chs.clonesMu.Unlock()
 }
 
 // ReconcileReleaseDef asks the ChartChangeSync to examine the release
@@ -300,6 +324,8 @@ func (chs *ChartChangeSync) reconcileReleaseDef(fhr fluxv1beta1.HelmRelease) {
 	rel, _ := chs.release.GetDeployedRelease(releaseName)
 
 	opts := release.InstallOptions{DryRun: false}
+
+	defer chs.cleanUpStaleClones(fhr)
 
 	chartPath := ""
 	chartRevision := ""
