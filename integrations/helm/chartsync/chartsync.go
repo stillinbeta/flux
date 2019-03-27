@@ -416,6 +416,18 @@ func (chs *ChartChangeSync) DeleteRelease(fhr fluxv1beta1.HelmRelease) {
 	if err != nil {
 		chs.logger.Log("warning", "Chart release not deleted", "release", name, "error", err)
 	}
+
+	// Remove the clone we may have for this HelmRelease
+	cloneName := cloneName(name, fhr.Spec.ChartSource.GitChartSource)
+	chs.clonesMu.Lock()
+	cloneForChart, ok := chs.clones[cloneName]
+	if ok {
+		if cloneForChart.export != nil {
+			cloneForChart.export.Clean()
+		}
+		delete(chs.clones, cloneName)
+	}
+	chs.clonesMu.Unlock()
 }
 
 // SyncMirrors instructs all mirrors to refresh from their upstream.
