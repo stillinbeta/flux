@@ -253,12 +253,14 @@ func moveTagAndPush(ctx context.Context, workingDir, tag, upstream string, tagAc
 	return nil
 }
 
-func verifyTag(ctx context.Context, workingDir, tag string) error {
-	args := []string{"verify-tag", tag}
-	if err := execGitCmd(ctx, args, gitCmdConfig{dir: workingDir}); err != nil {
-		return errors.Wrap(err, "verifying tag "+tag)
+// Verify tag and return the verified revision
+func verifyTag(ctx context.Context, workingDir, tag string) (string, error) {
+	out := &bytes.Buffer{}
+	args := []string{"verify-tag", "--format", "%(object)", tag}
+	if err := execGitCmd(ctx, args, gitCmdConfig{dir: workingDir, out: out}); err != nil {
+		return "", errors.Wrap(err, "verifying tag "+tag)
 	}
-	return nil
+	return strings.TrimSpace(out.String()), nil
 }
 
 func changed(ctx context.Context, workingDir, ref string, subPaths []string) ([]string, error) {

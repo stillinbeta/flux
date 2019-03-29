@@ -218,11 +218,11 @@ func (r *Repo) CommitsBetween(ctx context.Context, ref1, ref2 string, paths ...s
 	return onelinelog(ctx, r.dir, ref1+".."+ref2, paths)
 }
 
-func (r *Repo) VerifyTag(ctx context.Context, tag string) error {
+func (r *Repo) VerifyTag(ctx context.Context, tag string) (string, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if err := r.errorIfNotReady(); err != nil {
-		return err
+		return "", err
 	}
 	return verifyTag(ctx, r.dir, tag)
 }

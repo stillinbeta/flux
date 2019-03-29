@@ -90,7 +90,7 @@ func (d *Daemon) Loop(stop chan struct{}, wg *sync.WaitGroup, logger log.Logger)
 			d.AskForSync()
 		case <-d.Repo.C:
 			ctx, cancel := context.WithTimeout(context.Background(), d.GitConfig.Timeout)
-			newSyncHead, invalidCommit, err := latestValidRevision(ctx, d.Repo, d.GitConfig, syncHead)
+			newSyncHead, invalidCommit, err := latestValidRevision(ctx, d.Repo, d.GitConfig)
 			cancel()
 			if err != nil {
 				logger.Log("url", d.Repo.Origin().URL, "err", err)

@@ -353,14 +353,10 @@ func (d *Daemon) sync() jobFunc {
 		if err != nil {
 			return result, err
 		}
-		syncHead, err := d.Repo.Revision(ctx, d.GitConfig.SyncTag)
-		if err != nil && !isUnknownRevision(err) {
-			return result, err
-		}
 		var latestVerifiedRev string
-		if latestVerifiedRev, _, err = latestValidRevision(ctx, d.Repo, d.GitConfig, syncHead); err != nil {
+		if latestVerifiedRev, _, err = latestValidRevision(ctx, d.Repo, d.GitConfig); err != nil {
 			return result, err
-		} else if head, err := d.Repo.Revision(ctx, d.GitConfig.Branch); err != nil {
+		} else if head, err := d.Repo.Revision(ctx, "heads/"+d.GitConfig.Branch); err != nil {
 			return result, err
 		} else if head != latestVerifiedRev {
 			result.Revision = latestVerifiedRev
@@ -760,44 +756,48 @@ func policyEventTypes(u policy.Update) []string {
 // latestValidRevision returns the latest valid revision for the
 // configured branch when the verification of GPG signatures for Git
 // is enabled _or_ the HEAD revision of the configured branch when it
-// is not. In case verification is enabled and a current revision is
-// given it will also validate the tag signature -- as the state of
-// the branch can not be trusted when the tag originates from an
-// unknown source.
-func latestValidRevision(ctx context.Context, repo *git.Repo, gitConfig git.Config, currentRevision string) (string, git.Commit, error) {
+// is not. Signature validation happens for commits between the sync
+// tag revision and the HEAD, after the signature of the sync tag
+// itself has been validated, as the branch can not be trusted when
+// the tag originates from an unknown source.
+func latestValidRevision(ctx context.Context, repo *git.Repo, gitConfig git.Config) (string, git.Commit, error) {
 	var invalidCommit = git.Commit{}
-	newRevision, err := repo.Revision(ctx, gitConfig.Branch)
+	newRevision, err := repo.Revision(ctx, "heads/"+gitConfig.Branch)
 	if err != nil {
-		return currentRevision, invalidCommit, err
+		return "", invalidCommit, err
 	}
 	if !gitConfig.VerifySignatures {
 		return newRevision, invalidCommit, err
 	}
 
-	if currentRevision != "" {
-		err = repo.VerifyTag(ctx, gitConfig.SyncTag)
-		if err != nil {
-			return currentRevision, invalidCommit, errors.Wrap(err, "failed to verify signature of sync tag")
-		}
+	// Validate tag and the revision it points at to retrieve changeset
+	// of commits we need to validate.
+	tagRevision, err := repo.VerifyTag(ctx, gitConfig.SyncTag)
+	if err != nil && !strings.Contains(err.Error(), "not found.") {
+		return tagRevision, invalidCommit, errors.Wrap(err, "failed to verify signature of sync tag")
 	}
 
 	var commits []git.Commit
-	if currentRevision == "" {
+	if tagRevision == "" {
 		commits, err = repo.CommitsBefore(ctx, newRevision)
 	} else {
-		commits, err = repo.CommitsBetween(ctx, currentRevision, newRevision)
+		commits, err = repo.CommitsBetween(ctx, tagRevision, newRevision)
 	}
 
 	if err != nil {
-		return currentRevision, invalidCommit, err
+		return tagRevision, invalidCommit, err
 	}
 
+	// Loop through commits in ascending order, validating the
+	// signature of each commit. In case we hit an invalid commit, we
+	// return the revision of the commit before that, as that one is
+	// valid.
 	for i := len(commits) - 1; i >= 0; i-- {
 		if !commits[i].Signature.Valid() {
 			if i+1 < len(commits) {
 				return commits[i+1].Revision, commits[i], nil
 			}
-			return currentRevision, commits[i], nil
+			return tagRevision, commits[i], nil
 		}
 	}
 
@@ -805,9 +805,7 @@ func latestValidRevision(ctx context.Context, repo *git.Repo, gitConfig git.Conf
 }
 
 func verifyWorkingRepo(ctx context.Context, repo *git.Repo, working *git.Checkout, gitConfig git.Config) error {
-	if syncRevision, err := working.SyncRevision(ctx); err != nil && !isUnknownRevision(err) {
-		return err
-	} else if latestVerifiedRev, _, err := latestValidRevision(ctx, repo, gitConfig, syncRevision); err != nil {
+	if latestVerifiedRev, _, err := latestValidRevision(ctx, repo, gitConfig); err != nil {
 		return err
 	} else if headRev, err := working.HeadRevision(ctx); err != nil {
 		return err

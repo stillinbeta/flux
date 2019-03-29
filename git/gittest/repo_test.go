@@ -144,7 +144,7 @@ func TestSignedTag(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := checkout.VerifySyncTag(ctx)
+	_, err := checkout.VerifySyncTag(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

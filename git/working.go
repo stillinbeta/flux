@@ -187,7 +187,7 @@ func (c *Checkout) MoveSyncTagAndPush(ctx context.Context, tagAction TagAction) 
 	return moveTagAndPush(ctx, c.dir, c.config.SyncTag, c.upstream.URL, tagAction)
 }
 
-func (c *Checkout) VerifySyncTag(ctx context.Context) error {
+func (c *Checkout) VerifySyncTag(ctx context.Context) (string, error) {
 	return verifyTag(ctx, c.dir, c.config.SyncTag)
 }
 
